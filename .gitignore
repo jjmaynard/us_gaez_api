@@ -12,3 +12,5 @@ analysis/site_libs
 proj_setup/
 .Rdata
 .httr-oauth
+code/pyaez
+code/Ghana_code
