@@ -57,22 +57,28 @@ class PchipInterpolator:
         # Compute derivatives using PCHIP algorithm
         d = np.zeros(n)
         
-        # Interior points
-        for i in range(1, n - 1):
-            # Weighted harmonic mean for shape preservation
-            w1 = 2 * h[i] + h[i-1]
-            w2 = h[i] + 2 * h[i-1]
+        # Special case: only 2 points (linear interpolation)
+        if n == 2:
+            # For 2 points, derivatives are just the slope
+            d[0] = delta[0]
+            d[1] = delta[0]
+        else:
+            # Interior points
+            for i in range(1, n - 1):
+                # Weighted harmonic mean for shape preservation
+                w1 = 2 * h[i] + h[i-1]
+                w2 = h[i] + 2 * h[i-1]
+                
+                if delta[i-1] * delta[i] > 0:
+                    # Same sign - use weighted harmonic mean
+                    d[i] = (w1 + w2) / (w1 / delta[i-1] + w2 / delta[i])
+                else:
+                    # Different signs or zero - derivative is zero
+                    d[i] = 0.0
             
-            if delta[i-1] * delta[i] > 0:
-                # Same sign - use weighted harmonic mean
-                d[i] = (w1 + w2) / (w1 / delta[i-1] + w2 / delta[i])
-            else:
-                # Different signs or zero - derivative is zero
-                d[i] = 0.0
-        
-        # Boundary conditions (one-sided differences)
-        d[0] = self._edge_derivative(h[0], h[1], delta[0], delta[1])
-        d[-1] = self._edge_derivative(h[-1], h[-2], delta[-1], delta[-2])
+            # Boundary conditions (one-sided differences)
+            d[0] = self._edge_derivative(h[0], h[1], delta[0], delta[1])
+            d[-1] = self._edge_derivative(h[-1], h[-2], delta[-1], delta[-2])
         
         self.d = d
         self.h = h
