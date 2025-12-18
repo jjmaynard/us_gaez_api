@@ -5,8 +5,16 @@
 import numpy as np
 import pandas as pd
 import math
-from scipy.interpolate import PchipInterpolator, interp1d
 import sys
+
+# Use lightweight NumPy-only interpolation (no scipy - saves 110MB!)
+try:
+    from lightweight_interpolate import PchipInterpolator, interp1d
+    SCIPY_AVAILABLE = False
+except ImportError:
+    # Fallback to scipy if lightweight version not available
+    from scipy.interpolate import PchipInterpolator, interp1d
+    SCIPY_AVAILABLE = True
 
 # set system path
 sys.path.append('/mnt/c/R_Drive/Data_Files/LPKS_Data/R_Projects/GAEZ-Hyperlocalization/code')
