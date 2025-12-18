@@ -49,6 +49,22 @@ build/
 htmlcov/
 *.ipynb
 
+# Heavy code files not needed for API
+code/Ghana_code/
+code/pyaez/
+code/*.nb.html
+code/*.Rmd
+
+# Large Python files (if not essential for API)
+code/US_scripts/SSURGO_GAEZ_Calc.ipynb
+code/US_scripts/test_enhanced_interpretation.py
+
+# Keep only essential US_scripts files for API
+# Exclude interpretation lookup files if too large
+# code/US_scripts/SQ2_crop_interpretations.py  # 481KB
+# code/US_scripts/SQ3_crop_interpretations.py  # 206KB
+# code/US_scripts/SQ4_crop_interpretations.py  # 154KB
+
 # Documentation
 *.md
 !code/US_scripts/api/README.md

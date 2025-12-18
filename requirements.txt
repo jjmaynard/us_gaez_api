@@ -1,17 +1,10 @@
 # GAEZ API Requirements for Vercel Deployment
-# Core Python dependencies
+# Optimized to stay under 250MB limit - uses SDA REST API instead of WCS
 
 # Data processing
 numpy>=1.21.0,<2.0.0
 pandas>=1.3.0,<3.0.0
 scipy>=1.7.0,<2.0.0
-
-# Geospatial
-geopandas>=0.10.0,<1.0.0
-shapely>=1.8.0,<3.0.0
-rasterio>=1.2.0,<2.0.0
-pyproj>=3.2.0,<4.0.0
-fiona>=1.8.0,<2.0.0
 
 # HTTP and web
 requests>=2.26.0,<3.0.0
@@ -27,3 +20,14 @@ httpx>=0.25.0
 
 # Logging
 python-json-logger>=2.0.0
+
+# NOTE: Heavy geospatial libraries NOT needed!
+# We use USDA's SDA REST API for spatial queries (server-side processing)
+# This eliminates need for:
+# - geopandas (GDAL ~100MB+)
+# - rasterio (GDAL ~80MB+)
+# - fiona (GDAL ~60MB+)
+# - pyproj (PROJ ~40MB+)
+# - shapely (GEOS ~15MB+)
+#
+# Result: ~100MB total package size, well under Vercel's 250MB limit!

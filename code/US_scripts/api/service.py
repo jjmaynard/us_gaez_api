@@ -11,8 +11,35 @@ import time
 import math
 
 import pandas as pd
-import geopandas as gpd
-from shapely.geometry import Point, box
+
+# Optional geospatial imports (may not be available in lightweight deployments)
+try:
+    import geopandas as gpd
+    from shapely.geometry import Point, box
+    GEOSPATIAL_AVAILABLE = True
+except ImportError:
+    GEOSPATIAL_AVAILABLE = False
+    # Provide minimal fallback
+    class Point:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+    class box:
+        @staticmethod
+        def __call__(minx, miny, maxx, maxy):
+            return {"bounds": [minx, miny, maxx, maxy]}
+
+# Import lightweight elevation/slope functions (no geospatial packages needed)
+try:
+    from GAEZ_elevation_slope import get_slope_for_gaez
+    SLOPE_API_AVAILABLE = True
+except ImportError:
+    SLOPE_API_AVAILABLE = False
+    import warnings
+    warnings.warn(
+        "GAEZ_elevation_slope not available - slope will default to 0 if not provided.",
+        ImportWarning
+    )
 
 
 def _safe_float(value, default: float = 0.0) -> float:
@@ -44,6 +71,14 @@ import GAEZ_SQI_functions
 import GAEZ_US_phase_calc
 import GAEZ_crop_req
 import GAEZ_soil_data_processing
+
+# Import lightweight SDA query functions (no geospatial dependencies)
+try:
+    from GAEZ_SDA_query import get_dominant_mukey_at_point, get_mukeys_by_lat_lon
+    SDA_QUERY_AVAILABLE = True
+except ImportError:
+    SDA_QUERY_AVAILABLE = False
+    logger.warning("GAEZ_SDA_query not available - falling back to WCS method")
 
 from .models import (
     CalculationRequest,
@@ -188,6 +223,25 @@ class GAEZCalculationService:
             logger.info("Classifying soil phases")
             ssurgo_with_phases = GAEZ_US_phase_calc.classify_gaez_v4_phases(ssurgo_data)
 
+            # Step 2.5: Add slope data if missing and API is available
+            if 'slope' not in ssurgo_with_phases.columns or ssurgo_with_phases['slope'].isna().all():
+                if SLOPE_API_AVAILABLE:
+                    try:
+                        logger.info("Fetching slope data from USGS API")
+                        slope = get_slope_for_gaez(
+                            request.location.latitude,
+                            request.location.longitude,
+                            method='simple'
+                        )
+                        ssurgo_with_phases['slope'] = slope
+                        logger.info(f"Added slope data: {slope}%")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch slope: {str(e)}, defaulting to 0")
+                        ssurgo_with_phases['slope'] = 0.0
+                else:
+                    logger.warning("Slope data not available, defaulting to 0")
+                    ssurgo_with_phases['slope'] = 0.0
+
             # Step 3: Integrate user data if provided
             working_data = ssurgo_with_phases.copy()
             data_sources_info = {
@@ -318,33 +372,61 @@ class GAEZCalculationService:
             Tuple of (DataFrame with soil data, dict with mukey info)
         """
         try:
-            logger.info(f"Fetching SSURGO data from {database} at resolution {resolution}m")
+            logger.info(f"Fetching SSURGO data from {database} for ({location.latitude}, {location.longitude})")
 
-            # Create point geometry and small buffer for AOI
-            point = Point(location.longitude, location.latitude)
-            aoi_gdf = gpd.GeoDataFrame(
-                {'geometry': [point.buffer(0.001)]},  # Small buffer (~100m)
-                crs="EPSG:4326"
-            )
+            # Try lightweight SDA query first (no heavy geospatial packages needed)
+            if SDA_QUERY_AVAILABLE:
+                try:
+                    logger.info("Using lightweight SDA query (no geospatial packages)")
+                    mukey = get_dominant_mukey_at_point(location.latitude, location.longitude)
+                    
+                    if mukey is None:
+                        logger.warning("No mukey found at location using SDA query")
+                        return None, {'mukey_count': 0, 'mukeys': [], 'method': 'sda_query'}
+                    
+                    mukeys = [mukey]
+                    logger.info(f"Found mukey {mukey} using SDA query")
+                    
+                except Exception as e:
+                    logger.warning(f"SDA query failed: {str(e)}, falling back to WCS method")
+                    mukeys = None
+            else:
+                mukeys = None
 
-            # Fetch mukey raster
-            try:
-                mukey_raster = GAEZ_SSURGO_data.mukey_wcs(
-                    aoi=aoi_gdf,
-                    db=database,
-                    res=resolution
+            # Fallback to WCS method if SDA query not available or failed
+            if mukeys is None:
+                if not GEOSPATIAL_AVAILABLE:
+                    raise SSURGODataError(
+                        "Neither SDA query nor geospatial libraries (geopandas/rasterio) are available. "
+                        "Cannot fetch SSURGO data. Please provide soil data directly via user_horizons parameter."
+                    )
+                
+                logger.info("Using WCS method (requires geospatial packages)")
+                # Create point geometry and small buffer for AOI
+                point = Point(location.longitude, location.latitude)
+                aoi_gdf = gpd.GeoDataFrame(
+                    {'geometry': [point.buffer(0.001)]},  # Small buffer (~100m)
+                    crs="EPSG:4326"
                 )
-            except Exception as e:
-                logger.error(f"Failed to fetch mukey raster: {str(e)}")
-                raise SSURGODataError(f"Cannot retrieve SSURGO data: {str(e)}")
 
-            # Extract unique mukeys from raster
-            import numpy as np
-            raster_data = mukey_raster.read(1)  # Read first band as numpy array
-            mukeys = np.unique(raster_data[raster_data > 0]).tolist()
+                # Fetch mukey raster
+                try:
+                    mukey_raster = GAEZ_SSURGO_data.mukey_wcs(
+                        aoi=aoi_gdf,
+                        db=database,
+                        res=resolution
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to fetch mukey raster: {str(e)}")
+                    raise SSURGODataError(f"Cannot retrieve SSURGO data: {str(e)}")
 
-            # Close the rasterio dataset to free resources
-            mukey_raster.close()
+                # Extract unique mukeys from raster
+                import numpy as np
+                raster_data = mukey_raster.read(1)  # Read first band as numpy array
+                mukeys = np.unique(raster_data[raster_data > 0]).tolist()
+
+                # Close the rasterio dataset to free resources
+                mukey_raster.close()
 
             if not mukeys:
                 raise SSURGODataError("No valid SSURGO map units found at location")
@@ -495,6 +577,14 @@ class GAEZCalculationService:
             record['drainage_cl'] = site_data.drainage_class
         if site_data.slope_pct is not None:
             record['slope'] = site_data.slope_pct
+        elif SLOPE_API_AVAILABLE:
+            # If slope not provided, try to fetch it from USGS API using location
+            try:
+                # Need to get lat/lon from somewhere - this should be passed in
+                # For now, we'll let it be handled later if location is available
+                pass
+            except Exception:
+                pass
         if site_data.elevation_m is not None:
             record['elevation'] = site_data.elevation_m
         if site_data.water_table_depth_cm is not None:

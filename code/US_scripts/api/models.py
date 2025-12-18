@@ -35,6 +35,43 @@ class Location(BaseModel):
     }
 
 
+class BoundingBox(BaseModel):
+    """Bounding box specification for area queries."""
+    min_lon: float = Field(..., ge=-180, le=180, description="Minimum longitude (west)")
+    min_lat: float = Field(..., ge=-90, le=90, description="Minimum latitude (south)")
+    max_lon: float = Field(..., ge=-180, le=180, description="Maximum longitude (east)")
+    max_lat: float = Field(..., ge=-90, le=90, description="Maximum latitude (north)")
+
+    @model_validator(mode='after')
+    def validate_bbox(self):
+        if self.max_lon <= self.min_lon:
+            raise ValueError("max_lon must be greater than min_lon")
+        if self.max_lat <= self.min_lat:
+            raise ValueError("max_lat must be greater than min_lat")
+        return self
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"min_lon": -101.77, "min_lat": 41.18, "max_lon": -101.50, "max_lat": 41.30}
+            ]
+        }
+    }
+
+
+class WKTGeometry(BaseModel):
+    """Well-Known Text geometry specification."""
+    wkt: str = Field(..., description="WKT geometry string (EPSG:4326)")
+    
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"wkt": "POLYGON((-101.77 41.18, -101.77 41.30, -101.50 41.30, -101.50 41.18, -101.77 41.18))"}
+            ]
+        }
+    }
+
+
 class PlotDataHorizon(BaseModel):
     """User-provided plot/field measurements for a soil horizon."""
     horizon_id: str = Field(..., description="Unique identifier for the horizon")

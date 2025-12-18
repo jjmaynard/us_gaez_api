@@ -20,9 +20,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 class TestFullGAEZWorkflow:
     """Integration tests for complete GAEZ assessment workflow"""
 
-    @patch('GAEZ_soil_data_processing.rasterio.sample.sample_gen')
-    @patch('GAEZ_soil_data_processing.rasterio.open')
-    def test_complete_soil_quality_assessment_workflow(self, mock_rasterio_open, mock_sample_gen):
+    @patch('GAEZ_soil_data_processing.get_slope_for_gaez')
+    def test_complete_soil_quality_assessment_workflow(self, mock_get_slope):
         """
         Test complete workflow: SSURGO data → user data integration → soil quality assessment
 
@@ -42,10 +41,8 @@ class TestFullGAEZWorkflow:
             )
             from GAEZ_SSURGO_data import classify_pscl
 
-            # Mock rasterio for slope data retrieval
-            mock_dataset = MagicMock()
-            mock_rasterio_open.return_value.__enter__.return_value = mock_dataset
-            mock_sample_gen.return_value = iter([[4.5]])  # 4.5% slope
+            # Mock USGS slope API to return 4.5% slope
+            mock_get_slope.return_value = 4.5
 
             # 1. Start with realistic SSURGO map data (3 horizons, 0-120cm depth)
             map_data = pd.DataFrame({

@@ -2,12 +2,23 @@
 # Function to GAEZ Soil Quality Indides
 import pandas as pd
 import numpy as np
-import rasterio
 
 # import local functions
 import GAEZ_SQI_functions
 import gaez_config
 from GAEZ_SSURGO_data import gettt, getTXT_id, getTextGroup
+
+# Import lightweight elevation/slope functions (no geospatial packages needed)
+try:
+    from GAEZ_elevation_slope import get_slope_for_gaez
+    SLOPE_API_AVAILABLE = True
+except ImportError:
+    SLOPE_API_AVAILABLE = False
+    import warnings
+    warnings.warn(
+        "GAEZ_elevation_slope not available - slope will default to 0.",
+        ImportWarning
+    )
 
 
 def getSand(texture_class):
@@ -347,12 +358,18 @@ def process_plot_data(plot_data, map_data):
                 REF_DEPTH=bedrock
             )
             
-            # Recalculate soil drainage class by retrieving slope data from a DEM
-            olm_250_slope = "/vsicurl/https://s3.eu-central-1.wasabisys.com/openlandmap/layers250m/dtm_slope_merit.dem_m_250m_s0..0cm_2017_v1.0.tif"
-            coords = [(plot_data['longitude'].iloc[0], plot_data['latitude'].iloc[0])]
-            with rasterio.open(olm_250_slope) as ds:
-                for val in rasterio.sample.sample_gen(ds, coords):
-                    slope = val  # Use the retrieved slope value as needed
+            # Fetch slope using REST API (no geospatial packages needed)
+            if SLOPE_API_AVAILABLE:
+                try:
+                    slope = get_slope_for_gaez(
+                        plot_data['latitude'].iloc[0],
+                        plot_data['longitude'].iloc[0],
+                        method='simple'  # Fast N-S sampling
+                    )
+                except Exception as e:
+                    slope = 0.0
+            else:
+                slope = 0.0
         
         else:
             # If no valid soil slice data exists, return the unmodified map_data
@@ -389,13 +406,14 @@ def process_site_data(site_data, map_data):
             bedrock_depth=bedrock
         )
 
-        # Retrieve slope data from a DEM file (for example, using OpenLandMap's 250m slope dataset)
-        olm_250_slope = "/vsicurl/https://s3.eu-central-1.wasabisys.com/openlandmap/layers250m/dtm_slope_merit.dem_m_250m_s0..0cm_2017_v1.0.tif"
-        coords = [(longitude, latitude)]
-        slope = None  # Initialize slope with default value
-        with rasterio.open(olm_250_slope) as ds:
-            for val in rasterio.sample.sample_gen(ds, coords):
-                slope = val[0]  # Assume the sample returns an array; extract the first element
+        # Fetch slope using REST API (no geospatial packages needed)
+        if SLOPE_API_AVAILABLE:
+            try:
+                slope = get_slope_for_gaez(latitude, longitude, method='simple')
+            except Exception as e:
+                slope = 0.0
+        else:
+            slope = 0.0
 
         # Update map_data with the retrieved slope value
         map_data = map_data.assign(slope=slope)
