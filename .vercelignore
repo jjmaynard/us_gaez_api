@@ -10,9 +10,14 @@
 *.nb.html
 *.knit.md
 
-# Data directories (usually too large for Vercel)
-data/
+# Data directories (exclude large files but keep CSV lookup tables)
+# IMPORTANT: data/raw_data/*.csv files ARE needed for the API
+data/derived_data/
 results/
+# Exclude the data directory except for raw_data CSV files
+data/*
+!data/raw_data/
+!data/raw_data/*.csv
 
 # Documentation
 docs/
