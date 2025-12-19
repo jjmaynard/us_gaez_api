@@ -4,11 +4,20 @@ Integrate user-provided data (plot, site, lab) with SSURGO map data.
 Priority order: Lab data > Plot/Site data > Map data (SSURGO)
 - Lab data supersedes plot data supersedes map data for the same property
 - User data overlays on SSURGO - preserves unmeasured depths
+- Recalculates derived columns (texture class) when particle size changes
 """
 
 import pandas as pd
 import numpy as np
 import logging
+
+# Import texture classification functions
+try:
+    from GAEZ_SSURGO_data import gettt, getTXT_id, getTextGroup
+    TEXTURE_FUNCTIONS_AVAILABLE = True
+except ImportError:
+    TEXTURE_FUNCTIONS_AVAILABLE = False
+    logging.warning("Texture classification functions not available")
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +63,8 @@ def integrate_plot_data(user_horizons: pd.DataFrame, ssurgo_data: pd.DataFrame) 
     
     # For each user horizon, find overlapping SSURGO horizons
     updated_count = 0
+    texture_updated_rows = []  # Track rows where sand/silt/clay changed
+    
     for idx, user_hz in user_horizons.iterrows():
         user_top = user_hz['hzdept']
         user_bot = user_hz['hzdepb']
@@ -67,6 +78,9 @@ def integrate_plot_data(user_horizons: pd.DataFrame, ssurgo_data: pd.DataFrame) 
         if not overlapping.any():
             continue
         
+        # Track if texture components changed (need to recalculate texture class)
+        texture_changed = False
+        
         # Update each mapped property
         for api_col, ssurgo_col in column_map.items():
             if api_col in user_hz.index and ssurgo_col in result.columns:
@@ -74,6 +88,55 @@ def integrate_plot_data(user_horizons: pd.DataFrame, ssurgo_data: pd.DataFrame) 
                 if pd.notna(value):
                     result.loc[overlapping, ssurgo_col] = value
                     updated_count += 1
+                    # Track if particle size changed
+                    if api_col in ['sandtotal', 'silttotal', 'claytotal']:
+                        texture_changed = True
+        
+        # If texture components changed, mark rows for recalculation
+        if texture_changed:
+            texture_updated_rows.extend(result[overlapping].index.tolist())
+    
+    # Recalculate texture class for affected horizons
+    if texture_updated_rows and TEXTURE_FUNCTIONS_AVAILABLE:
+        texture_updated_rows = list(set(texture_updated_rows))  # Remove duplicates
+        logger.info(f"Recalculating texture class for {len(texture_updated_rows)} horizons")
+        
+        for idx in texture_updated_rows:
+            sand = result.loc[idx, 'sandtotal_r']
+            clay = result.loc[idx, 'claytotal_r']
+            silt = result.loc[idx, 'silttotal_r']
+            
+            if pd.notna(sand) and pd.notna(clay) and pd.notna(silt):
+                try:
+                    # Recalculate texture class
+                    texture_class = gettt(sand=sand, silt=silt, clay=clay)
+                    if texture_class:
+                        result.loc[idx, 'texcl'] = texture_class
+                        result.loc[idx, 'texture_class'] = texture_class
+                        
+                        # Recalculate texture class ID
+                        try:
+                            texture_id = getTXT_id(texture_class)
+                            if pd.notna(texture_id):
+                                result.loc[idx, 'texture_class_id'] = int(texture_id)
+                                logger.info(f"Row {idx}: Recalculated texture from sand={sand:.1f}%, silt={silt:.1f}%, clay={clay:.1f}% -> '{texture_class}' (ID={int(texture_id)})")
+                            else:
+                                logger.error(f"Row {idx}: getTXT_id returned NaN/None for texture='{texture_class}'. This will cause SQI calculation failures!")
+                        except Exception as e:
+                            logger.error(f"Row {idx}: Failed to get texture_class_id for '{texture_class}': {e}")
+                        
+                        # Recalculate texture group (PSCL)
+                        try:
+                            pscl = getTextGroup(texture_class)
+                            if pd.notna(pscl):
+                                result.loc[idx, 'PSCL'] = pscl
+                                logger.debug(f"Row {idx}: Updated PSCL to {pscl}")
+                        except Exception as e:
+                            logger.warning(f"Row {idx}: Failed to get PSCL for {texture_class}: {e}")
+                    else:
+                        logger.error(f"Row {idx}: gettt returned None/empty for sand={sand:.1f}%, silt={silt:.1f}%, clay={clay:.1f}%")
+                except Exception as e:
+                    logger.warning(f"Failed to recalculate texture for row {idx}: {e}")
     
     logger.info(f"Plot data: Updated {updated_count} property values in overlapping horizons")
     return result

@@ -212,6 +212,10 @@ def classify_gaez_v4_phases(df):
     Returns:
         DataFrame with 'cokey' and classification columns for each GAEZ v4 phase.
     """
+    
+    # CRITICAL: Work on a copy to prevent mutating the input DataFrame
+    # This prevents data corruption across API requests
+    df = df.copy()
 
     # Define HWSD Phase IDs
     PHASE_IDS = {

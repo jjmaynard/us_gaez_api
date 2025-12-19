@@ -804,6 +804,10 @@ def gaez_sqi_ratings(map_data, CROP_ID, inputLevel, depthWt_type=1, plot_data=No
     # S4 Very severe constraint (30%)
     # N  Not suitable (<10%)
     """
+    # CRITICAL: Work on a copy to prevent mutating the input DataFrame
+    # This prevents data corruption across API requests
+    map_data = map_data.copy()
+    
     # Integrate user-provided field/lab/site data if available
     map_data = GAEZ_soil_data_processing.process_plot_data(plot_data, map_data)
     map_data = GAEZ_soil_data_processing.process_site_data(site_data, map_data)
