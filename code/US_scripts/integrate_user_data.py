@@ -38,19 +38,22 @@ def integrate_plot_data(user_horizons: pd.DataFrame, ssurgo_data: pd.DataFrame) 
     """
     result = ssurgo_data.copy()
     
-    # Mapping from API column names to SSURGO raw (_r) columns
+    logger.info(f"SSURGO data columns: {list(result.columns)}")
+    
+    # Mapping from API column names to SSURGO columns
+    # Note: After phase classification, columns are renamed (sand not sandtotal_r)
     column_map = {
-        'sandtotal': 'sandtotal_r',
-        'silttotal': 'silttotal_r',
-        'claytotal': 'claytotal_r',
-        'om': 'om_r',
-        'ph': 'ph1to1h2o_r',
-        'DB': 'dbovendry_r',
-        'CF': 'total_frag_volume',
-        'cecs': 'cec7_r',
-        'ec': 'ec_r',
-        'caco3': 'caco3_r',
-        'gypsum': 'gypsum_r'
+        'sandtotal': 'sand',
+        'silttotal': 'silt',
+        'claytotal': 'clay',
+        'om': 'om',
+        'ph': 'ph',
+        'DB': 'db',
+        'CF': 'fragvol',
+        'cecs': 'cecs',
+        'ec': 'ec',
+        'caco3': 'caco3',
+        'gypsum': 'gypsum'
     }
     
     # Get SSURGO depth columns
@@ -69,6 +72,8 @@ def integrate_plot_data(user_horizons: pd.DataFrame, ssurgo_data: pd.DataFrame) 
         user_top = user_hz['hzdept']
         user_bot = user_hz['hzdepb']
         
+        logger.info(f"User horizon {idx}: depth {user_top}-{user_bot} cm, data: {user_hz.to_dict()}")
+        
         # Find overlapping SSURGO horizons
         overlapping = (
             (result[depth_top_col] < user_bot) &
@@ -76,6 +81,7 @@ def integrate_plot_data(user_horizons: pd.DataFrame, ssurgo_data: pd.DataFrame) 
         )
         
         if not overlapping.any():
+            logger.warning(f"No overlapping SSURGO horizons for user horizon {idx}")
             continue
         
         # Track if texture components changed (need to recalculate texture class)
@@ -86,11 +92,17 @@ def integrate_plot_data(user_horizons: pd.DataFrame, ssurgo_data: pd.DataFrame) 
             if api_col in user_hz.index and ssurgo_col in result.columns:
                 value = user_hz[api_col]
                 if pd.notna(value):
+                    logger.info(f"  Updating {ssurgo_col} from {result.loc[overlapping, ssurgo_col].values} to {value}")
                     result.loc[overlapping, ssurgo_col] = value
                     updated_count += 1
                     # Track if particle size changed
                     if api_col in ['sandtotal', 'silttotal', 'claytotal']:
                         texture_changed = True
+            else:
+                if api_col in user_hz.index:
+                    logger.debug(f"  Column {ssurgo_col} not in SSURGO data (api_col={api_col})")
+                else:
+                    logger.debug(f"  {api_col} not in user data")
         
         # If texture components changed, mark rows for recalculation
         if texture_changed:
@@ -102,17 +114,16 @@ def integrate_plot_data(user_horizons: pd.DataFrame, ssurgo_data: pd.DataFrame) 
         logger.info(f"Recalculating texture class for {len(texture_updated_rows)} horizons")
         
         for idx in texture_updated_rows:
-            sand = result.loc[idx, 'sandtotal_r']
-            clay = result.loc[idx, 'claytotal_r']
-            silt = result.loc[idx, 'silttotal_r']
+            sand = result.loc[idx, 'sand']
+            clay = result.loc[idx, 'clay']
+            silt = result.loc[idx, 'silt']
             
             if pd.notna(sand) and pd.notna(clay) and pd.notna(silt):
                 try:
                     # Recalculate texture class
                     texture_class = gettt(sand=sand, silt=silt, clay=clay)
                     if texture_class:
-                        result.loc[idx, 'texcl'] = texture_class
-                        result.loc[idx, 'texture_class'] = texture_class
+                        result.loc[idx, 'texture'] = texture_class
                         
                         # Recalculate texture class ID
                         try:
@@ -129,10 +140,10 @@ def integrate_plot_data(user_horizons: pd.DataFrame, ssurgo_data: pd.DataFrame) 
                         try:
                             pscl = getTextGroup(texture_class)
                             if pd.notna(pscl):
-                                result.loc[idx, 'PSCL'] = pscl
-                                logger.debug(f"Row {idx}: Updated PSCL to {pscl}")
+                                result.loc[idx, 'pscl'] = pscl
+                                logger.debug(f"Row {idx}: Updated pscl to {pscl}")
                         except Exception as e:
-                            logger.warning(f"Row {idx}: Failed to get PSCL for {texture_class}: {e}")
+                            logger.warning(f"Row {idx}: Failed to get pscl for {texture_class}: {e}")
                     else:
                         logger.error(f"Row {idx}: gettt returned None/empty for sand={sand:.1f}%, silt={silt:.1f}%, clay={clay:.1f}%")
                 except Exception as e:
@@ -298,6 +309,8 @@ def integrate_all_user_data(user_data, ssurgo_data: pd.DataFrame) -> tuple:
                 plot_records.append(record)
             
             plot_df = pd.DataFrame(plot_records)
+            logger.info(f"Plot data DataFrame columns: {list(plot_df.columns)}")
+            logger.info(f"Plot data values: {plot_df.to_dict('records')}")
             result = integrate_plot_data(plot_df, result)
             sources['user_plot_data_used'] = True
             logger.info(f"Integrated {len(plot_records)} plot horizons")
