@@ -341,22 +341,39 @@ def process_plot_data(plot_data, map_data):
             p_hz_data = pd.concat([hz_depb, txt_d, txt_id, txt_grp, txt_grp_id, rf_d], axis=1)
             p_hz_data.columns = ["BotDep", "text_class", "text_class_id", "PSCL", "PSCL_ID", "CFRAG"]
             
-            # Adjust the depth intervals to match the provided 'map_data' DataFrame.
-            depths_wise = len(map_data.index)
-            depths_pedon = len(p_hz_data.index)
-            if depths_wise > depths_pedon:
-                map_data = map_data.iloc[0:depths_pedon, :]
-            elif depths_wise < depths_pedon:
-                p_hz_data = p_hz_data.iloc[0:depths_wise, :]
+            # IMPORTANT: Overlay user data on top of SSURGO, don't replace entire profile
+            # User data only updates the horizons they measured (typically surface)
+            # Keep SSURGO data for deeper horizons unless bedrock is specified
             
-            # Update the 'map_data' DataFrame with the new soil properties
-            map_data = map_data.assign(
-                text_class=p_hz_data['text_class'].values,
-                text_class_id=p_hz_data['text_class_id'].values,
-                PSCL=p_hz_data['PSCL'].values,
-                CFRAG=p_hz_data['CFRAG'].values,
-                REF_DEPTH=bedrock
-            )
+            depths_pedon = len(p_hz_data.index)  # Number of user-measured horizons
+            
+            # If bedrock depth indicates a shallow soil, truncate to bedrock
+            if bedrock is not None and bedrock < 200:
+                # Truncate map_data to bedrock depth
+                if hasattr(map_data, 'hzdepb_r'):
+                    map_data = map_data[map_data['hzdepb_r'] <= bedrock].copy()
+                elif hasattr(map_data, 'hzdept_r'):
+                    map_data = map_data[map_data['hzdept_r'] < bedrock].copy()
+                else:
+                    # No depth columns, truncate by row count assuming ~10cm layers
+                    max_rows = int(bedrock / 10) + 1
+                    if len(map_data) > max_rows:
+                        map_data = map_data.iloc[0:max_rows, :].copy()
+            
+            # Overlay user data onto the first N horizons (surface layers)
+            # Preserve SSURGO data for deeper horizons beyond user measurements
+            overlay_depth = min(depths_pedon, len(map_data))
+            
+            # Update only the surface horizons with user data
+            map_data = map_data.copy()  # Ensure we're working with a copy
+            for col in ['text_class', 'text_class_id', 'PSCL', 'CFRAG']:
+                if col in p_hz_data.columns:
+                    # Update only the measured depths
+                    map_data.loc[map_data.index[:overlay_depth], col] = p_hz_data[col].iloc[:overlay_depth].values
+            
+            # Set reference depth (bedrock) if specified
+            if bedrock is not None:
+                map_data = map_data.assign(REF_DEPTH=bedrock)
             
             # Fetch slope using REST API (no geospatial packages needed)
             if SLOPE_API_AVAILABLE:

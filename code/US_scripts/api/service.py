@@ -80,6 +80,14 @@ except ImportError:
     SDA_QUERY_AVAILABLE = False
     logger.warning("GAEZ_SDA_query not available - falling back to WCS method")
 
+# Import user horizon overlay function (new API-specific data integration)
+try:
+    from overlay_user_horizons import overlay_user_horizons
+    OVERLAY_AVAILABLE = True
+except ImportError:
+    OVERLAY_AVAILABLE = False
+    logger.warning("overlay_user_horizons not available - using legacy process_plot_data")
+
 from .models import (
     CalculationRequest,
     CalculationResponse,
@@ -489,14 +497,30 @@ class GAEZCalculationService:
         working_data = ssurgo_data.copy()
 
         try:
+            # Extract bedrock depth from site_data if provided (needed for plot data processing)
+            bedrock_depth = None
+            if user_data.site_data and user_data.site_data.bedrock_depth_cm is not None:
+                bedrock_depth = user_data.site_data.bedrock_depth_cm
+            
             # Process plot data (field measurements)
             if user_data.plot_data and len(user_data.plot_data) > 0:
                 logger.info(f"Integrating {len(user_data.plot_data)} user plot data horizons")
-                plot_df = self._convert_plot_data_to_df(user_data.plot_data)
-                working_data = GAEZ_soil_data_processing.process_plot_data(
-                    plot_data=plot_df,
-                    map_data=working_data
-                )
+                plot_df = self._convert_plot_data_to_df(user_data.plot_data, bedrock_depth)
+                
+                # Use new overlay function if available (API-specific, preserves subsurface data)
+                if OVERLAY_AVAILABLE:
+                    working_data = overlay_user_horizons(
+                        user_horizons=plot_df,
+                        ssurgo_data=working_data,
+                        bedrock_depth=bedrock_depth
+                    )
+                else:
+                    # Fallback to legacy function (may truncate profile)
+                    working_data = GAEZ_soil_data_processing.process_plot_data(
+                        plot_data=plot_df,
+                        map_data=working_data
+                    )
+                
                 data_sources_info['user_plot_data_used'] = True
                 data_sources_info['horizons_count'] = len(working_data)
 
@@ -527,8 +551,17 @@ class GAEZCalculationService:
 
         return working_data, data_sources_info
 
-    def _convert_plot_data_to_df(self, plot_data: list) -> pd.DataFrame:
-        """Convert API plot data models to DataFrame format expected by GAEZ functions."""
+    def _convert_plot_data_to_df(self, plot_data: list, bedrock_depth: float = None) -> pd.DataFrame:
+        """
+        Convert API plot data models to DataFrame format expected by GAEZ functions.
+        
+        Args:
+            plot_data: List of PlotHorizon objects with user measurements
+            bedrock_depth: Optional bedrock depth in cm (default: None = assume deep soil)
+        
+        Returns:
+            DataFrame with horizon data and bedrock_depth column
+        """
         records = []
         for horizon in plot_data:
             record = {
@@ -567,7 +600,16 @@ class GAEZCalculationService:
 
             records.append(record)
 
-        return pd.DataFrame(records)
+        df = pd.DataFrame(records)
+        
+        # Add bedrock_depth as a column (all rows get same value for process_plot_data compatibility)
+        # If None, defaults to 200 (deep soil) in process_plot_data
+        if bedrock_depth is not None:
+            df['bedrock_depth'] = bedrock_depth
+        else:
+            df['bedrock_depth'] = np.nan  # Will default to 200 in processing
+        
+        return df
 
     def _convert_site_data_to_df(self, site_data) -> pd.DataFrame:
         """Convert API site data model to DataFrame format expected by GAEZ functions."""
