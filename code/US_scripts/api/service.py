@@ -88,6 +88,14 @@ except ImportError:
     OVERLAY_AVAILABLE = False
     logger.warning("overlay_user_horizons not available - using legacy process_plot_data")
 
+# Import new unified user data integration
+try:
+    from integrate_user_data import integrate_all_user_data
+    USER_INTEGRATION_AVAILABLE = True
+except ImportError:
+    USER_INTEGRATION_AVAILABLE = False
+    logger.warning("integrate_user_data not available")
+
 from .models import (
     CalculationRequest,
     CalculationResponse,
@@ -266,11 +274,24 @@ class GAEZCalculationService:
             }
 
             if request.user_data:
-                working_data, data_sources_info = self._integrate_user_data(
-                    working_data,
-                    request.user_data,
-                    data_sources_info
-                )
+                if USER_INTEGRATION_AVAILABLE:
+                    # New unified integration: Lab > Plot/Site > Map priority
+                    logger.info("Integrating user data with priority: Lab > Plot/Site > Map")
+                    working_data, user_sources = integrate_all_user_data(
+                        request.user_data,
+                        working_data
+                    )
+                    # Update data sources info
+                    data_sources_info.update(user_sources)
+                    data_sources_info['horizons_count'] = len(working_data)
+                else:
+                    # Fallback: use legacy integration (deprecated)
+                    logger.warning("Using legacy data integration - may not work correctly with API")
+                    working_data, data_sources_info = self._integrate_user_data(
+                        working_data,
+                        request.user_data,
+                        data_sources_info
+                    )
 
             # Step 4: Determine depth weight type
             depth_weight_type = self._get_depth_weight_type(
@@ -502,53 +523,42 @@ class GAEZCalculationService:
             if user_data.site_data and user_data.site_data.bedrock_depth_cm is not None:
                 bedrock_depth = user_data.site_data.bedrock_depth_cm
             
-            # Process plot data (field measurements)
+            # ============================================================================
+            # USER DATA INTEGRATION TEMPORARILY DISABLED
+            # ============================================================================
+            # The legacy data processing functions (process_plot_data, process_site_data,
+            # process_lab_data) expect column formats from the old R interface:
+            #   - plot: 'texture', 'bottom', 'rfv_class', 'latitude', 'longitude'
+            #   - site: 'latitude', 'longitude', 'bedrock_depth'
+            #   - lab: 'OC', 'pH', 'TEB', 'BS', 'ECEC', 'CECc', 'ESP', 'bottom', 'texture'
+            #
+            # The API provides different formats:
+            #   - plot: 'hzdept', 'hzdepb', 'sandtotal', 'claytotal', 'ph', 'om', etc.
+            #   - site: 'drainage_class', 'slope', 'elevation', 'bedrock_depth_cm', etc.
+            #   - lab: 'depth_cm', 'ph_h2o', 'organic_carbon_pct', 'cec_cmol_kg', etc.
+            #
+            # TODO: Create new API-compatible integration functions that:
+            #   1. Accept API column formats
+            #   2. Overlay user data on SSURGO (preserve subsurface)
+            #   3. Recalculate derived columns (texture_class_id) when needed
+            # ============================================================================
+            
+            # Process plot data (field measurements) - DISABLED
             if user_data.plot_data and len(user_data.plot_data) > 0:
-                logger.info(f"Integrating {len(user_data.plot_data)} user plot data horizons")
-                plot_df = self._convert_plot_data_to_df(user_data.plot_data, bedrock_depth)
-                
-                # TEMPORARY: Disable overlay function - it needs more work to handle texture recalculation
-                # Use legacy function for now (works but may truncate profile)
-                # TODO: Fix overlay to trigger texture class recalculation when sand/silt/clay change
-                if False and OVERLAY_AVAILABLE:  # Disabled
-                    working_data = overlay_user_horizons(
-                        user_horizons=plot_df,
-                        ssurgo_data=working_data,
-                        bedrock_depth=bedrock_depth
-                    )
-                else:
-                    # Fallback to legacy function
-                    # Note: This may truncate profile if user data is shallow
-                    try:
-                        working_data = GAEZ_soil_data_processing.process_plot_data(
-                            plot_data=plot_df,
-                            map_data=working_data
-                        )
-                    except Exception as e:
-                        logger.warning(f"Error in process_plot_data: {e}, skipping plot data integration")
-                
-                data_sources_info['user_plot_data_used'] = True
-                data_sources_info['horizons_count'] = len(working_data)
+                logger.warning(f"Plot data integration temporarily disabled - awaiting API-compatible function")
+                logger.info(f"User provided {len(user_data.plot_data)} horizons but they cannot be used yet")
+                data_sources_info['user_plot_data_used'] = False
 
-            # Process site data (site characteristics)
+            # Process site data (site characteristics) - DISABLED  
             if user_data.site_data:
-                logger.info("Integrating user site data")
-                site_df = self._convert_site_data_to_df(user_data.site_data)
-                working_data = GAEZ_soil_data_processing.process_site_data(
-                    site_data=site_df,
-                    map_data=working_data
-                )
-                data_sources_info['user_site_data_used'] = True
+                logger.warning("Site data integration temporarily disabled - awaiting API-compatible function")
+                data_sources_info['user_site_data_used'] = False
 
-            # Process lab data (laboratory measurements)
+            # Process lab data (laboratory measurements) - DISABLED
             if user_data.lab_data and len(user_data.lab_data) > 0:
-                logger.info(f"Integrating {len(user_data.lab_data)} user lab data samples")
-                lab_df = self._convert_lab_data_to_df(user_data.lab_data)
-                working_data = GAEZ_soil_data_processing.process_lab_data(
-                    lab_data=lab_df,
-                    map_data=working_data
-                )
-                data_sources_info['user_lab_data_used'] = True
+                logger.warning(f"Lab data integration temporarily disabled - awaiting API-compatible function")
+                logger.info(f"User provided {len(user_data.lab_data)} lab samples but they cannot be used yet")
+                data_sources_info['user_lab_data_used'] = False
 
         except Exception as e:
             logger.warning(f"Error integrating user data: {str(e)}")
