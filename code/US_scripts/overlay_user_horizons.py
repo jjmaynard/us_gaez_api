@@ -22,10 +22,11 @@ def overlay_user_horizons(user_horizons: pd.DataFrame, ssurgo_data: pd.DataFrame
     - SSURGO data for deeper horizons is preserved (e.g., 25-200 cm) 
     - If bedrock_depth is provided, profile is truncated to that depth
     - If no bedrock_depth, assumes soil continues to full SSURGO depth
+    - Only updates raw measurement columns, preserves derived/calculated columns
     
     Args:
         user_horizons: DataFrame with columns like hzdept, hzdepb, sandtotal, claytotal, ph, etc.
-        ssurgo_data: DataFrame with SSURGO horizon data
+        ssurgo_data: DataFrame with SSURGO horizon data (after phase classification)
         bedrock_depth: Optional bedrock depth in cm. If None, assumes deep soil (>200 cm)
     
     Returns:
@@ -33,22 +34,20 @@ def overlay_user_horizons(user_horizons: pd.DataFrame, ssurgo_data: pd.DataFrame
     """
     result = ssurgo_data.copy()
     
-    # Column mapping from API names to SSURGO names
+    # Column mapping from API names to SSURGO raw measurement names
+    # ONLY map to _r (raw) columns to avoid breaking derived columns
     column_mapping = {
         'sandtotal': 'sandtotal_r',
         'silttotal': 'silttotal_r', 
         'claytotal': 'claytotal_r',
         'om': 'om_r',
-        'OC': 'om_r',  # Convert OC to OM if needed
         'ph': 'ph1to1h2o_r',
         'cecs': 'cec7_r',
-        'BS': 'sumbases_r',
         'ec': 'ec_r',
-        'ESP': 'esp_r',
         'caco3': 'caco3_r',
         'gypsum': 'gypsum_r',
         'DB': 'dbovendry_r',
-        'CF': 'fragvol_r'
+        'CF': 'total_frag_volume'  # This is aggregated coarse fragments
     }
     
     # Get depth columns from SSURGO
@@ -78,6 +77,9 @@ def overlay_user_horizons(user_horizons: pd.DataFrame, ssurgo_data: pd.DataFrame
             (result[depth_top_col] < user_bot) &
             (result[depth_bot_col] > user_top)
         )
+        
+        if not overlapping.any():
+            continue
         
         # Update properties for overlapping horizons
         for api_col, ssurgo_col in column_mapping.items():
